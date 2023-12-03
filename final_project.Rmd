@@ -1,0 +1,393 @@
+---
+title: "final_project_slide"
+author: "Alex Cheung"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(readxl)
+library(ggplot2)
+library(skimr)
+library(janitor)
+library(lubridate)
+library(tidyr)
+library(readr)
+library(corrplot)
+library(effectsize)
+library(ggthemes)
+library(pander)
+source("710_functions.R")
+```
+
+```{r}
+d <- read_csv("bestsellers with categories.csv") %>% janitor::clean_names() %>%
+  dplyr::mutate(year_factor = factor(year, levels = c("2009", "2010", "2011", "2012", "2013", "2014", "2015", "2016", "2017", "2018", "2019"))) %>% 
+  glimpse()
+
+head <- head(d)
+describe(d)
+summary(d)
+skimr::skim(d)
+
+dplyr::count(d, genre) 
+
+d <- d %>%
+  mutate(price = case_when(
+    name == "Cabin Fever (Diary of a Wimpy Kid, Book 6)" ~ 4.00,
+    name == "Diary of a Wimpy Kid: Hard Luck, Book 8" ~ 4.00,
+    name == "Frozen (Little Golden Book)" ~ 3.86,
+    name == "JOURNEY TO THE ICE P" ~ 5.34,
+    name == "Little Blue Truck" ~ 5.94,
+    name == "The Constitution of the United States" ~ 5.49,
+    name == "The Getaway" ~ 7.99,
+    name == "The Short Second Life of Bree Tanner: An Eclipse Novella (The Twilight Saga)" ~ 5.73,
+    name == "To Kill a Mockingbird" ~ 6.55,
+  TRUE ~ price))
+
+cor_matrix <- d %>% select(-name, -author, -year_factor, -genre) %>% cor()
+cor_matrix
+
+```
+
+```{r}
+
+plot1 <- d %>% count(genre, sort = TRUE) %>% ggplot() + geom_col(aes(reorder(x=genre,n),y=n, width = .5, position = "dodge"))+labs(title="Number of Books Sold by Genre") + scale_y_continuous(breaks = seq(0, 320, 80), 
+                   limits = c(0,320), 
+                   expand = c(0,0)) + 
+  theme_classic() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) 
+
+plot1
+```
+
+```{r}
+price_genre <- d %>%
+  group_by(genre) %>%
+  summarize(mean_price = mean(price))
+
+plot <- ggplot(price_genre, 
+       aes(x = genre, 
+           y = mean_price)) +
+  geom_bar(stat = "identity", width = .5) +
+  scale_y_continuous(breaks = seq(0, 15, 5), 
+                   limits = c(0,15), 
+                   expand = c(0,0)) + 
+  ggtitle("Average Price vs Genre") +
+  xlab("Genre") +
+  ylab("Average Price") + 
+  theme_classic() 
+plot
+```
+
+```{r}
+d['estimated_profit'] <- d$user_rating * d$price
+```
+
+```{r}
+averageprofit_per_genre_by_rating<-aggregate(d$estimated_profit, list(d$genre), FUN=mean)
+
+plot2 <- ggplot(averageprofit_per_genre_by_rating, aes(Group.1, x )) +   
+  geom_bar(aes(fill = Group.1), position = "dodge", stat="identity", width = .9) + 
+  labs(title="Average Profit per Genre", y="Profit") + 
+  scale_y_continuous(breaks = seq(0, 75, 25), 
+                   limits = c(0,75), 
+                   expand = c(0,0)) + 
+  theme_classic() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
+
+plot2
+```
+
+```{r}
+d['estimated_profit_reviews'] <- d$reviews * d$price
+```
+
+```{r}
+averageprofit_per_genre_by_review<-aggregate(d$estimated_profit_reviews, list(d$genre), FUN=mean)
+plot3 <- ggplot(averageprofit_per_genre_by_review, aes(Group.1, x )) +   
+  geom_bar(aes(fill = Group.1), position = "dodge2", stat="identity", width = .8) + 
+  labs(title="Average Profit per Genre", y="Profit") + 
+  scale_y_continuous(breaks = seq(0, 200000, 50000), 
+                   limits = c(0,200000), 
+                   expand = c(0,0)) + 
+  theme_classic() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) 
+
+plot3
+```
+
+```{r}
+m2 <- lm(estimated_profit_reviews ~ genre_c, data = d)
+summary(m2)
+```
+
+```{r}
+d$genre_c <- dplyr::recode(d$genre, "Fiction" = -.5, "Non Fiction" = .5)
+```
+
+```{r}
+m_graph1 <- lm(price ~ reviews * genre_c, data = d)
+summary(m_graph1)
+eta_squared(car::Anova(m_graph1, type = "3"))
+# The effect on prices of reviews is .002 units higher for non-fiction books than fiction books
+
+d_graph <- expand.grid(reviews = seq(min(d$reviews), max(d$reviews), length = 88000), genre_c = c(-.5, .5))
+d_graph <- ggplotPredict(m_graph1, d_graph)
+
+d_graph$genre_str <- dplyr::recode(d_graph$genre_c,
+                                       "-.5" = "Fiction", 
+                                       ".5" = "Non-Fiction")
+
+d$genre_str <- dplyr::recode(d$genre_c,
+                                       "-.5" = "Fiction", 
+                                       ".5" = "Non-Fiction")
+
+plot3a <- d %>%
+  ggplot(aes(x = reviews, y = price, color = genre_str)) +
+  geom_point(size=0.7) +
+  geom_smooth(data = d_graph, stat = "identity", 
+              aes(y = Predicted, ymin = CILo, ymax = CIHi)) + 
+  scale_y_continuous(breaks = seq(0, 120, 20), 
+                   limits = c(0,120),
+                  expand = c(0,0)) + 
+  scale_fill_manual(name = "Genre", labels = c("Fiction", "Non-Fiction"), values = c("red", "blue")) + 
+  scale_color_manual(name = "Genre",labels = c("Fiction", "Non-Fiction"), values = c("red", "blue")) + 
+  xlab("Reviews") + ylab("Price of Books") + ggtitle("Interaction Effect of Reviews and Genre on Price") + 
+  theme_classic() + 
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(color = "black")) 
+
+plot3a
+```
+
+```{r}
+amzbooks_year <- d[d$year %in% c(2009, 2011, 2013, 2015, 2017, 2019),]
+plot4 <- ggplot(amzbooks_year, aes(x= year, y=price)) +
+  geom_violin(trim=FALSE, fill= "green", color="black")+ 
+  scale_y_continuous(limits = c(0, 125),
+                     expand = c(0,0)) + 
+  labs(title="Plot of Price by Year",x="Publication Year", y = "Price of Book")+
+  geom_boxplot(width=0.1) + 
+  theme_classic() + coord_flip()
+  
+plot4
+```
+
+```{r}
+m_graph <- lm(price ~ user_rating * genre_c, data = d)
+summary(m_graph)
+# not significant
+
+d_graph <- expand.grid(user_rating = seq(min(d$user_rating), max(d$user_rating), length = 5), genre_c = c(-.5, .5))
+d_graph <- ggplotPredict(m_graph, d_graph)
+
+d_graph$genre_str <- dplyr::recode(d_graph$genre_c,
+                                       "-.5" = "Fiction", 
+                                       ".5" = "Non-Fiction")
+
+d$genre_str <- dplyr::recode(d$genre_c,
+                                       "-.5" = "Fiction", 
+                                       ".5" = "Non-Fiction")
+
+plot3 <- d %>%
+  ggplot(aes(x = user_rating, y = price, color = genre_str)) +
+  geom_point(size=0.2, position= position_jitter(width = 0, height = 0.1)) +
+  geom_smooth(data = d_graph, stat = "identity", 
+              aes(y = Predicted, ymin = CILo, ymax = CIHi), size = .6) + 
+  scale_y_continuous(breaks = seq(0, 120, 20), 
+                   limits = c(0,120),
+                  expand = c(0,0)) + 
+  scale_x_continuous(breaks = seq(3,5,.5),
+                     limits = c(3,5)) + 
+  scale_fill_manual(name = "Genre", labels = c("Fiction", "Non-Fiction"), values = c("red", "blue")) + 
+  scale_color_manual(name = "Genre",labels = c("Fiction", "Non-Fiction"), values = c("red", "blue")) + 
+  xlab("User Rating") + ylab("Price of Books") + ggtitle("Interaction Effect of User Rating and Genre on Price") + 
+  theme_classic() + 
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(color = "black")) 
+
+plot3
+```
+
+```{r}
+m_graph <- lm(user_rating ~ reviews * genre_c, data = d)
+summary(m_graph)
+# not significant
+
+d_graph <- expand.grid(reviews = seq(min(d$reviews), max(d$reviews), length = 90000), genre_c = c(-.5, .5))
+d_graph <- ggplotPredict(m_graph, d_graph)
+
+d_graph$genre_str <- dplyr::recode(d_graph$genre_c,
+                                       "-.5" = "Fiction", 
+                                       ".5" = "Non-Fiction")
+
+d$genre_str <- dplyr::recode(d$genre_c,
+                                       "-.5" = "Fiction", 
+                                       ".5" = "Non-Fiction")
+
+plot3 <- d %>%
+  ggplot(aes(x = reviews, y = user_rating, color = genre_str)) +
+  geom_point(size=0.7) +
+  geom_smooth(data = d_graph, stat = "identity", 
+              aes(y = Predicted, ymin = CILo, ymax = CIHi)) + 
+  scale_y_continuous(breaks = seq(0, 5, 1), 
+                   limits = c(0,5),
+                  expand = c(0,0)) + 
+  scale_fill_manual(name = "Genre", labels = c("Fiction", "Non-Fiction"), values = c("red", "blue")) + 
+  scale_color_manual(name = "Genre",labels = c("Fiction", "Non-Fiction"), values = c("red", "blue")) + 
+  xlab("User Rating") + ylab("Price of Books") + ggtitle("Interaction Effect of User Rating and Genre on Price") + 
+  theme_classic() + 
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(color = "black")) 
+
+plot3
+```
+
+```{r}
+amzbooks_year <- d[d$year_factor %in% c(2009, 2011, 2013, 2015, 2017, 2019),]
+plot4 <- ggplot(amzbooks_year, aes(x= year_factor, y=price)) +
+  geom_violin(trim=FALSE, fill= "green", color="black")+ 
+  scale_y_continuous(limits = c(0, 125),
+                     expand = c(0,0)) + 
+  labs(title="Plot of Price by Year",x="Publication Year", y = "Price of Book")+
+  geom_boxplot(width=0.1) + 
+  theme_classic() + coord_flip()
+  
+plot4
+```
+
+```{r}
+m1 <- lm(price ~ genre_c, data = d)
+summary(m1)
+eta_squared(car::Anova(m1, type = "3"))
+
+# The price of books is 3.5 units higher for non-fiction books than fiction books, F(1,536) = 14.36, .03, p < .001. This relationship is significant. 
+
+d_graph1 <- data.frame(genre_c = c(-.5, .5))
+d_graph1 <- ggplotPredict(m1, d_graph1)
+
+d_graph1$genre <- dplyr::recode(d_graph1$genre_c, 
+                                   "-.5" = "Fiction", ".5" = "Non Fiction")
+
+plot5 <- ggplot(d_graph1, aes(x = genre, y = Predicted)) +
+  geom_bar(stat = "identity", width = .5, position = "dodge") + 
+  geom_errorbar(aes(ymin = CILo, ymax = CIHi, width = .2)) + 
+  scale_y_continuous(breaks = seq(0, 20, 5), 
+                   limits = c(0, 20),
+                  expand = c(0,0)) + 
+  ggtitle("Average Price vs Genre") +
+  xlab("Genre") +
+  ylab("Average Price") + 
+  theme_classic() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(color = "black")) 
+  
+
+plot5
+```
+
+```{r}
+min_reviews<- min(d$reviews)
+mean_rating<-mean(d$user_rating)
+
+books_weighted<- d %>%
+                    select(name,user_rating,reviews)%>%
+                    distinct(name,user_rating,reviews) %>%
+                    group_by(name) %>%
+                    summarise(weighted_rating=(((sum(reviews)/(sum(reviews)+min_reviews))*mean(user_rating)) +((min_reviews/(sum(reviews)+min_reviews))*mean_rating)),.groups = "drop")
+
+books_weighted<- merge(d, books_weighted, by.x="name", by.y="name")
+```
+
+```{r}
+options(repr.plot.width = 10, repr.plot.height = 9)
+
+avg_nonfiction<- books_weighted %>%
+                    filter(genre=="Non Fiction")%>%
+                    group_by(name) %>%
+                    summarise(avg_price=mean(price),.groups = "drop") %>%
+                    arrange(desc(avg_price)) %>% 
+                    top_n(10, wt=avg_price)
+
+ggplot(avg_nonfiction, aes(x=reorder(name, -avg_price), y=avg_price, fill=name))+
+        geom_point(stat='identity', col="violetred", size=4)+
+        geom_segment(aes(x=name,xend=name,y=min(avg_price),yend=max(avg_price)),linetype="dashed",size=0.1)+
+        coord_flip() +
+        theme_pander()+
+        scale_color_pander() + 
+        labs(x='Name of Books', y='Avg Price', title='Top 10 Most Expensive Non Fiction Books')+
+        geom_text(aes(x=name, y=0.01, label=avg_price ),hjust=-3, vjust=1.2, size=4,colour="black", fontface="bold")+
+        theme(plot.title = element_text(hjust=0.5),legend.position="none")
+```
+
+```{r}
+avg_fiction<-books_weighted %>%
+                    filter(genre=="Fiction")%>%
+                    group_by(name) %>%
+                    summarise(avg_price=mean(price),.groups = "drop") %>%
+                    arrange(desc(avg_price)) %>% 
+                    top_n(10, wt=avg_price)
+
+ggplot(avg_fiction, aes(x=reorder(name, -avg_price), y=avg_price, fill=name))+
+        geom_point(stat='identity', col="violetred", size=4)+
+        geom_segment(aes(x=name,xend=name,y=min(avg_price),yend=max(avg_price)),linetype="dashed",size=0.1)+
+        coord_flip() +
+        theme_pander()+
+        scale_color_pander()+
+        labs(x='Name of Books', y='Avg Price', title='Top 10 Most Expensive Fiction Books')+
+        geom_text(aes(x=name, y=0.01, label=avg_price ),hjust=-3, vjust=1.2, size=4,colour="black", fontface="bold")+
+        theme(plot.title = element_text(hjust=0.5),legend.position="none")
+```
+
+```{r}
+g1 <- amzbooks_year %>%
+  group_by(year_factor, genre) %>%
+  summarise(p = mean(price)) %>% 
+  ggplot(aes(year_factor, p, colour= genre, group= genre)) +
+  geom_line(size=0.8) +
+  geom_point(size = 2) +
+  scale_y_continuous(breaks = seq(0, 20, 5), 
+                   limits = c(0,20),
+                  expand = c(0,0)) +
+  scale_x_discrete(breaks = seq("2009", "2019", 1), expand=c(0.1, 0)) + 
+  labs(title= "Average Book Prices per Year", y= "Average Prices", x="Year") + theme_classic() + 
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(color = "black")) 
+
+g1
+
+```
+
+```{r}
+summary(lm(price ~ year, amzbooks_year))
+ggplot(amzbooks_year, aes(year_factor, price))+
+ geom_count(size = .8)+
+ geom_smooth(method = 'lm', formula = y ~ x, color = "orange")+
+  scale_y_continuous(breaks = seq(0, 120, 20), 
+                   limits = c(0,120),
+                  expand = c(0,0)) + 
+ labs(x = "Year", y = "Price", title = "Year Predicts Price") + theme_classic() + 
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(color = "black")) 
+```
+
+```{r}
+d %>%
+    select(name,genre) %>%
+    distinct(name,genre) %>%
+    group_by(genre) %>%
+    summarise(count=n(),.groups = "drop")%>% 
+    mutate(percent=prop.table(count) * 100) %>%
+    ggplot(aes(x="", y=percent,fill = genre))+
+    geom_bar(stat="identity",width = 1)+
+    coord_polar("y",start = pi / 3)+
+    theme_pander()+
+    scale_fill_manual(values=c('#D55E00','#56B4E9'))+
+    geom_label(aes(label = paste0(round(percent,2), "%")), position = position_stack(vjust = 0.5),
+               colour = "black",  fontface = "italic")+
+    theme(plot.title = element_text(hjust=0.5)) + 
+    labs(title="Percentage of Genre")
+```
+
